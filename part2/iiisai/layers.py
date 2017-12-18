@@ -366,12 +366,41 @@ def conv_forward_naive(x, w, b, conv_param):
       W' = 1 + (W + 2 * pad - WW) / stride
     - cache: (x, w, b, conv_param)
     """
-    out = None
+    stride = conv_param['stride']
+    pad = conv_param['pad']
+
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+
+    Hout, Wout = int(1 + (H + 2 * pad - HH) / stride), int(1 + (W + 2 * pad - WW) / stride)
+    out = np.zeros((N, F, Hout, Wout))
     ###########################################################################
     # TODO: Implement the convolutional forward pass.                         #
     # Hint: you can use the function np.pad for padding.                      #
     ###########################################################################
-    pass
+
+    # pad input: add zero-padding equally to height and width dimensions
+    pads = ((0, 0), (0, 0), (pad, pad), (pad, pad))
+    x_padded = np.pad(x, pads, 'constant')
+
+    # convert every filter in w to a vector
+    w_reshaped = w.reshape(F, C * HH * WW).T
+
+    for i in range(Hout):
+        top = i * stride
+        bottom = top + HH
+        for j in range(Wout):
+            left = j * stride
+            right = left + WW
+            # select subarray to do dot product with weights
+            x_sub = x_padded[:, :, top:bottom, left:right]
+
+            x_sub_reshaped = x_sub.reshape(N, np.prod(x_sub.shape[1:]))
+
+            products = x_sub_reshaped.dot(w_reshaped)
+
+            out[:, :, i, j] = products + b
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -396,7 +425,51 @@ def conv_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the convolutional backward pass.                        #
     ###########################################################################
-    pass
+    x, w, b, conv_param = cache
+
+    stride = conv_param['stride']
+    pad = conv_param['pad']
+
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+
+    N, F, Hout, Wout = dout.shape
+
+    # pad input: add zero-padding equally to height and width dimensions
+    pads = ((0, 0), (0, 0), (pad, pad), (pad, pad))
+    x_padded = np.pad(x, pads, 'constant')
+    dx_padded = np.zeros((N, C, H + 2 * pad, W + 2 * pad))
+
+    # convert every filter in w to a vector
+    w_reshaped = w.reshape((F, C * HH * WW))
+    dw_reshaped = np.zeros((F, C * HH * WW))
+
+    for i in range(Hout):
+        top = i * stride
+        bottom = top + HH
+        for j in range(Wout):
+            left = j * stride
+            right = left + WW
+            dout_entry = dout[:, :, i, j]
+
+            # compute dx_sub
+            # select subarray to do dot product with weights
+            dx_sub = dout_entry.dot(w_reshaped)
+            dx_sub_reshaped = dx_sub.reshape((N, C, HH, WW))
+            dx_padded[:, :, top:bottom, left:right] += dx_sub_reshaped
+
+            # compute dw
+            x_sub_reshaped = x_padded[:, :, top:bottom, left:right].reshape((N, C * HH * WW))
+            dw_reshaped += dout_entry.T.dot(x_sub_reshaped)
+
+            # dw_sub = dout_entry.dot(x_sub.reshape(()))
+
+    dx = dx_padded[:, :, pad:-pad, pad:-pad]
+    dw = dw_reshaped.reshape(w.shape)
+
+    # compute db
+    db = dout.sum(axis=(0, 2, 3))
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -422,7 +495,26 @@ def max_pool_forward_naive(x, pool_param):
     ###########################################################################
     # TODO: Implement the max pooling forward pass                            #
     ###########################################################################
-    pass
+    stride = pool_param['stride']
+    WW = pool_param['pool_width']
+    HH = pool_param['pool_height']
+
+    N, C, H, W = x.shape
+
+    Hout, Wout = int(1 + (H - HH) / stride), int(1 + (W - WW) / stride)
+    out = np.zeros((N, C, Hout, Wout))
+
+    for i in range(Hout):
+        top = i * stride
+        bottom = top + HH
+        for j in range(Wout):
+            left = j * stride
+            right = left + WW
+            # select subarray to do dot product with weights
+            x_sub = x[:, :, top:bottom, left:right]
+            out[:, :, i, j] = np.amax(x_sub, axis=(2, 3))
+            
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -445,7 +537,36 @@ def max_pool_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the max pooling backward pass                           #
     ###########################################################################
-    pass
+    x, pool_param = cache
+
+    stride = pool_param['stride']
+    WW = pool_param['pool_width']
+    HH = pool_param['pool_height']
+
+    N, C, H, W = x.shape
+
+    Hout, Wout = int(1 + (H - HH) / stride), int(1 + (W - WW) / stride)
+    dx = np.zeros(x.shape)
+
+    for i in range(Hout):
+        top = i * stride
+        bottom = top + HH
+        for j in range(Wout):
+            left = j * stride
+            right = left + WW
+            # select subarray to do dot product with weights
+            x_sub = x[:, :, top:bottom, left:right]
+            x_sub_reshaped = x_sub.reshape((N * C, WW * HH))
+            argmaxes = np.argmax(x_sub_reshaped, axis=1)
+            # maxima = x_sub_reshaped[np.arange(x_sub_reshaped.shape[0]), argmaxes]
+            out_new = np.zeros(x_sub_reshaped.shape)
+            out_new[np.arange(out_new.shape[0]), argmaxes] = 1
+            
+            out_sub = out_new.reshape(x_sub.shape)
+            # multiply by upstream derivative
+            out_new *= dout[:, :, i, j].reshape((out_new.shape[0], 1))
+            dx[:, :, top:bottom, left:right] = out_new.reshape(x_sub.shape)
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
