@@ -137,7 +137,33 @@ class CaptioningRNN(object):
         # defined above to store loss and gradients; grads[k] should give the      #
         # gradients for self.params[k].                                            #
         ############################################################################
-        pass
+        # compute initial hidden state from image features
+        affine_out, affine_cache = affine_forward(features, W_proj, b_proj)
+
+        # use word embedding to transform words in captions from indices to vectors
+        captions_in_embedded, embed_cache = word_embedding_forward(captions_in, W_embed)
+
+        # forward pass through rnn
+        rnn_out, rnn_cache = rnn_forward(captions_in_embedded, affine_out, Wx, Wh, b)
+
+        # compute scores over the vocabulary over every timestep
+        scores, temp_cache = temporal_affine_forward(rnn_out, W_vocab, b_vocab)
+
+        # compute loss using captions_out
+        loss, dx = temporal_softmax_loss(scores, captions_out, mask)
+
+        # backward pass
+        # temporal affine layer
+        drnn, grads['W_vocab'], grads['b_vocab'] = temporal_affine_backward(dx, temp_cache)
+
+        # rnn backward pass
+        dembed, daffine, grads['Wx'], grads['Wh'], grads['b'] = rnn_backward(drnn, rnn_cache)
+
+        # word embedding
+        grads['W_embed'] = word_embedding_backward(dembed, embed_cache)
+
+        # affine layer
+        _, grads['W_proj'], grads['b_proj'] = affine_backward(daffine, affine_cache)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -199,7 +225,32 @@ class CaptioningRNN(object):
         # functions; you'll need to call rnn_step_forward or lstm_step_forward in #
         # a loop.                                                                 #
         ###########################################################################
-        pass
+        prev_word = self._start * np.ones((N, 1), dtype=np.int32)
+        
+        prev_h, affine_cache = affine_forward(features, W_proj, b_proj)
+
+        for i in range(max_length):
+            # (1)
+            embed_out, embed_cache = word_embedding_forward(prev_word, W_embed)
+
+            # correct embed_out shape, since it does not support T=1
+            embed_out = embed_out.reshape((embed_out.shape[0], embed_out.shape[2]))
+            # (2)
+            rnn_out, rnn_cache = rnn_step_forward(embed_out, prev_h, Wx, Wh, b)
+
+            # update hidden state
+            prev_h = rnn_out
+
+            # (3)
+            temporal_out, temporal_cache = affine_forward(rnn_out, W_vocab, b_vocab)
+
+            # (4)
+            best_word = np.argmax(temporal_out, axis=1)
+
+            captions[:, i] = best_word
+
+            prev_word = best_word.reshape(N, 1)
+            
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
